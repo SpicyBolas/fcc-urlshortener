@@ -6,7 +6,10 @@ var conString = `postgres://${process.env.USER}:${process.env.PASS}@localhost:54
 //Create the client for connection to the SQL database
 var client = new pg.Client(conString);
 
+//Require dns-lookup to validate the url
+var lookup = require('dns-lookup');
 
+//Require express and create app
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -40,14 +43,33 @@ app.listen(port, function() {
   //Finally Qury again for the url_id, and return to client
 
 app.post('/api/shorturl',(req,res)=>{
-  
+  var client = new pg.Client(conString);
   //Write initial promise
+  
+  //Use regex to remove the http prefix
+  var re = /(www\..+$)/g;
+  var input_url = req.body.url.match(re)[1];
+  console.log(input_url)
   var sqlQueries = new Promise((resolve,reject)=>{
+    lookup(input_url,function(err,address,family){
+      if(err){
+        reject("URL not valid.");
+      }
+      else{
+        resolve(input_url);
+      }
+    })
+  });
+
+  //Begin promise chain 
+  sqlQueries.then(function(value){
+    return  new Promise((resolve,reject)=>{
     //Connect to the database
     client.connect();
     //Query the table for existing entry
-    client.query("SELECT * FROM url_table WHERE url_long= $1",[req.body.url],(err,result)=>{
+    client.query("SELECT * FROM url_table WHERE url_long= $1",[value],(err,result)=>{
       if(err){
+        client.end();
         reject(err);
       }
       else{
@@ -56,35 +78,37 @@ app.post('/api/shorturl',(req,res)=>{
       }
     });
   });
-
-  //Begin promise chain 
-  sqlQueries.then(function(value){
-    return new Promise((resolve,reject)=>{
-      //If data already in table, move to querying for id.
-      if(value.length>0){
-        resolve(req.body.url);
-      }else{
-        //Otherwise, if not in the table, insert:
-        client.query("INSERT INTO url_table(url_long) VALUES($1)",[req.body.url],(err,result)=>{
-          if(err){
-            reject(err);
-          }
-          else{
-            resolve(req.body.url);
-          }
-        });
-      }
-    }
-    );
   })
+    .then(function(value){
+      return new Promise((resolve,reject)=>{
+        //If data already in table, move to querying for id.
+        if(value.length>0){
+          
+          resolve(req.body.url.match(re)[1]);
+        }else{
+          //Otherwise, if not in the table, insert:
+          client.query("INSERT INTO url_table(url_long) VALUES($1)",[req.body.url.match(re)[0]],(err,result)=>{
+            if(err){
+              client.end();
+              reject(err);
+            }
+            else{
+              resolve(req.body.url.match(re)[1]);
+            }
+          });
+        }
+      }
+      );
+    })
     .then(function(value){
       return new Promise((resolve,reject)=>{
         //Perform a final query for the short url (url_id)
         client.query("SELECT * FROM url_table WHERE url_long= $1",[value],(err,result)=>{
-          client.end();
           if(err){
-            reject("Error");
+            client.end();
+            reject(err);
           }else{
+            client.end();
             resolve(result.rows);
         }
       });
@@ -93,45 +117,29 @@ app.post('/api/shorturl',(req,res)=>{
     .then(function(value){
       res.json({original_url: value[0].url_long,short_url: value[0].url_id});
     }) // TODO: CHeck the catch statement below works
-    .catch((error)=>{res.sendStatus(500)});
+    .catch((error)=>{res.send(error)});
 }); 
 
+//Set up a get API to link to the requestedn website
+app.get('/api/:shorturl',function(req,res){
+  var client = new pg.Client(conString);
+  var redirectUser = new Promise((resolve,reject)=>{ 
+    client.connect();
+     client.query("SELECT * FROM url_table WHERE url_id= $1",[req.params.shorturl],(err,result)=>{
+          client.end();
+          if(err){
+            client.end();
+            reject(err);
+          }else if(result.rows.length==0){
+            reject("Short URL does not exist");
+          }else{
+            resolve(result.rows[0].url_long);
+        }
+      })});
 
-
-
-
-
-/*
-app.post('/api/shorturl',function(req,res,next){
-  //Get the long URL from the post request
-  //Set up a connection to postgresql
-  //Check if the url already exists
-  var row_result = [];
-  var url_short;
-
-  console.log(get_saved_url(req.body.url));
-  //res.locals.row_result = get_saved_url(req.body.url);
-  next();
-},function(req,res,next){
-  if(res.locals.row_result==[]){
-    //If no url in table then update the table
-    insert_url(req.body.url);
-  }else{
-    //Otherwise set the url short to the query result
-    console.log(res.locals.row_result);
-    res.locals.url_short = res.locals.row_result.url_id;
-  }
-  next();
-  },function(req,res){
-    var url_short;
-    //Requery for the short url if was inserted
-    if(res.locals.row_result==[]){
-      url_short = get_saved_url(req.body.url)[0].url_id;
-    }else{
-      url_short = res.locals.url_short;
-    }
-
-    res.json({original_url: req.body.url,short_url: url_short});
+      //If successful, redirect to website, otherwise throw error
+      redirectUser.then(function(value){
+        res.redirect('https://'+value);
+      })
+      .catch((error)=>{res.send(error)});
   });
-*/
-//Postgresql functions
