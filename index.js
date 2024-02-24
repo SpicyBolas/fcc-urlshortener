@@ -46,9 +46,9 @@ app.post('/api/shorturl',(req,res)=>{
   var client = new pg.Client(conString);
   //Write initial promise
   
-  //Use regex to remove the http prefix
-  var re = /(www\..+$)/g;
-  var input_url = req.body.url.match(re)[1];
+  //Use regex to remove the http/s prefix with a look behind
+  var re = /(?<=([https|http]:\/\/)?)(www\..+)/;
+  var input_url = re.exec(req.body.url)[0];
   console.log(input_url)
   var sqlQueries = new Promise((resolve,reject)=>{
     lookup(input_url,function(err,address,family){
@@ -84,16 +84,16 @@ app.post('/api/shorturl',(req,res)=>{
         //If data already in table, move to querying for id.
         if(value.length>0){
           
-          resolve(req.body.url.match(re)[1]);
+          resolve(re.exec(req.body.url)[0]);
         }else{
           //Otherwise, if not in the table, insert:
-          client.query("INSERT INTO url_table(url_long) VALUES($1)",[req.body.url.match(re)[0]],(err,result)=>{
+          client.query("INSERT INTO url_table(url_long) VALUES($1)",[re.exec(req.body.url)[0]],(err,result)=>{
             if(err){
               client.end();
               reject(err);
             }
             else{
-              resolve(req.body.url.match(re)[1]);
+              resolve(re.exec(req.body.url)[0]);
             }
           });
         }
