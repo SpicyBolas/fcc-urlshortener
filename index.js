@@ -47,16 +47,21 @@ app.post('/api/shorturl',(req,res)=>{
   //Write initial promise
   
   //Use regex to remove the http/s prefix with a look behind
-  var re = /(?<=([https|http]:\/\/)?)(www\..+)/;
-  var input_url = re.exec(req.body.url)[0];
-  console.log(input_url)
+  var re = /^(https:\/\/|http:\/\/)/g;
+  var input_url = req.body.url.replace(re,'');
   var sqlQueries = new Promise((resolve,reject)=>{
+    //Check the url begins with www
+    var re_www = /^www\..+/;
+    if(!re_www.test(input_url)){
+      input_url = 'www.' + input_url;
+    }
+
     lookup(input_url,function(err,address,family){
       if(err){
-        reject("URL not valid.");
+        reject("invalid url");
       }
       else{
-        resolve(input_url);
+        resolve(req.body.url);
       }
     })
   });
@@ -87,13 +92,13 @@ app.post('/api/shorturl',(req,res)=>{
           resolve(re.exec(req.body.url)[0]);
         }else{
           //Otherwise, if not in the table, insert:
-          client.query("INSERT INTO url_table(url_long) VALUES($1)",[re.exec(req.body.url)[0]],(err,result)=>{
+          client.query("INSERT INTO url_table(url_long) VALUES($1)",[req.body.url],(err,result)=>{
             if(err){
               client.end();
               reject(err);
             }
             else{
-              resolve(re.exec(req.body.url)[0]);
+              resolve(req.body.url);
             }
           });
         }
@@ -117,7 +122,7 @@ app.post('/api/shorturl',(req,res)=>{
     .then(function(value){
       res.json({original_url: value[0].url_long,short_url: value[0].url_id});
     }) // TODO: CHeck the catch statement below works
-    .catch((error)=>{res.send(error)});
+    .catch((err)=>{res.json({error: err})});
 }); 
 
 //Set up a get API to link to the requestedn website
@@ -139,7 +144,7 @@ app.get('/api/:shorturl',function(req,res){
 
       //If successful, redirect to website, otherwise throw error
       redirectUser.then(function(value){
-        res.redirect('https://'+value);
+        res.redirect(value);
       })
       .catch((error)=>{res.send(error)});
   });
